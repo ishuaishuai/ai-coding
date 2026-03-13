@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 知识测验 - 从入门到专业</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 26px; margin-bottom: 8px; }
+        .header p { opacity: 0.9; font-size: 13px; }
+        .difficulty-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .badge-easy { background: #4caf50; color: white; }
+        .badge-medium { background: #ff9800; color: white; }
+        .badge-hard { background: #f44336; color: white; }
+        .badge-pro { background: #9c27b0; color: white; }
+        .progress-bar { height: 4px; background: #e0e0e0; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width 0.3s; }
+        .quiz-content { padding: 30px; }
+        .question { display: none; }
+        .question.active { display: block; animation: fadeIn 0.3s; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .question-number { color: #667eea; font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+        .question-text { font-size: 18px; color: #333; margin-bottom: 25px; line-height: 1.6; }
+        .options { display: flex; flex-direction: column; gap: 12px; }
+        .option {
+            padding: 15px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .option:hover { border-color: #667eea; background: #f8f9ff; }
+        .option.selected { border-color: #667eea; background: #667eea; color: white; }
+        .option.correct { border-color: #4caf50; background: #e8f5e9; }
+        .option.wrong { border-color: #f44336; background: #ffebee; }
+        .option-letter {
+            width: 28px; height: 28px;
+            border-radius: 50%;
+            background: #e0e0e0;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 600; font-size: 14px; flex-shrink: 0;
+        }
+        .option.selected .option-letter { background: white; color: #667eea; }
+        .option.correct .option-letter { background: #4caf50; color: white; }
+        .option.wrong .option-letter { background: #f44336; color: white; }
+        .btn {
+            width: 100%; padding: 16px;
+            border: none; border-radius: 12px;
+            font-size: 16px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s;
+            margin-top: 25px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(102,126,234,0.4); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .result { display: none; text-align: center; padding: 40px 30px; }
+        .result.active { display: block; animation: fadeIn 0.5s; }
+        .result-icon { font-size: 80px; margin-bottom: 20px; }
+        .result-score { font-size: 48px; font-weight: 700; color: #667eea; margin-bottom: 10px; }
+        .result-title { font-size: 24px; color: #333; margin-bottom: 15px; }
+        .result-desc { color: #666; line-height: 1.6; margin-bottom: 30px; }
+        .start-screen { text-align: center; padding: 40px 30px; }
+        .start-screen h2 { font-size: 24px; margin-bottom: 15px; color: #333; }
+        .start-screen p { color: #666; margin-bottom: 30px; line-height: 1.6; }
+        .difficulty-legend {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #666;
+        }
+        .legend-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+        }
+        .explanation {
+            background: #f8f9ff; border-left: 4px solid #667eea;
+            padding: 15px; margin-top: 20px;
+            border-radius: 0 8px 8px 0;
+            font-size: 14px; color: #555;
+            display: none;
+        }
+        .explanation.show { display: block; animation: fadeIn 0.3s; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI 知识测验</h1>
+            <p>从入门到专业 · 10道题测出你的AI段位</p>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="p" style="width:0%"></div></div>
+
+        <div class="quiz-content">
+            <!-- 开始界面 -->
+            <div class="start-screen" id="startScreen">
+                <h2>准备好挑战了吗？</h2>
+                <p>题目难度从入门到专业，小白和专家都能找到适合自己的挑战</p>
+                
+                <div class="difficulty-legend">
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background:#4caf50"></div>
+                        <span>入门</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background:#ff9800"></div>
+                        <span>进阶</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background:#f44336"></div>
+                        <span>专业</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot" style="background:#9c27b0"></div>
+                        <span>行业黑话</span>
+                    </div>
+                </div>
+                
+                <button class="btn btn-primary" onclick="start()">开始测验</button>
+            </div>
+
+            <!-- 测验区域 -->
+            <div id="quizArea" style="display: none;">
+                
+                <!-- 第1题：入门 -->
+                <div class="question active" data-index="0">
+                    <span class="difficulty-badge badge-easy">🌱 入门</span>
+                    <div class="question-text">你手机相册里能自动识别"猫"的照片，主要用到了什么技术？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 0, 0)"><span class="option-letter">A</span><span>大数据分析</span></div>
+                        <div class="option" onclick="selectOption(this, 0, 1)"><span class="option-letter">B</span><span>图像识别 / 计算机视觉</span></div>
+                        <div class="option" onclick="selectOption(this, 0, 2)"><span class="option-letter">C</span><span>云计算</span></div>
+                        <div class="option" onclick="selectOption(this, 0, 3)"><span class="option-letter">D</span><span>区块链</span></div>
+                    </div>
+                    <div class="explanation" id="exp-0">
+                        <strong>解析：</strong>图像识别是 AI 最常见的应用之一。手机用「计算机视觉」技术学习了几百万张猫的图片特征，才能识别出新照片里的猫。
+                    </div>
+                </div>
+
+                <!-- 第2题：入门 -->
+                <div class="question" data-index="1">
+                    <span class="difficulty-badge badge-easy">🌱 入门</span>
+                    <div class="question-text">"ChatGPT" 这个名字里的 "Chat" 是什么意思？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 1, 0)"><span class="option-letter">A</span><span>聊天 / 对话</span></div>
+                        <div class="option" onclick="selectOption(this, 1, 1)"><span class="option-letter">B</span><span>中文（Chinese）</span></div>
+                        <div class="option" onclick="selectOption(this, 1, 2)"><span class="option-letter">C</span><span>芯片（Chip）</span></div>
+                        <div class="option" onclick="selectOption(this, 1, 3)"><span class="option-letter">D</span><span>频道（Channel）</span></div>
+                    </div>
+                    <div class="explanation" id="exp-1">
+                        <strong>解析：</strong>Chat 就是「聊天」的意思。ChatGPT 是一个专门设计用来跟人对话聊天的 AI。
+                    </div>
+                </div>
+
+                <!-- 第3题：入门 -->
+                <div class="question" data-index="2">
+                    <span class="difficulty-badge badge-easy">🌱 入门</span>
+                    <div class="question-text">AI 模型"训练"的过程，大致相当于人类做什么？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 2, 0)"><span class="option-letter">A</span><span>跑步锻炼</span></div>
+                        <div class="option" onclick="selectOption(this, 2, 1)"><span class="option-letter">B</span><span>看书学习</span></div>
+                        <div class="option" onclick="selectOption(this, 2, 2)"><span class="option-letter">C</span><span>睡觉休息</span></div>
+                        <div class="option" onclick="selectOption(this, 2, 3)"><span class="option-letter">D</span><span>吃饭补充能量</span></div>
+                    </div>
+                    <div class="explanation" id="exp-2">
+                        <strong>解析：</strong>训练就是让 AI「看书学习」。给它看海量数据（书/图片/对话），让它从中找规律、学知识。
+                    </div>
+                </div>
+
+                <!-- 第4题：进阶 -->
+                <div class="question" data-index="3">
+                    <span class="difficulty-badge badge-medium">📈 进阶</span>
+                    <div class="question-text">为什么 ChatGPT 有时候会"胡说八道"，给出看似正确实则错误的答案？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 3, 0)"><span class="option-letter">A</span><span>服务器出故障了</span></div>
+                        <div class="option" onclick="selectOption(this, 3, 1)"><span class="option-letter">B</span><span>AI 产生了"幻觉"（Hallucination）</span></div>
+                        <div class="option" onclick="selectOption(this, 3, 2)"><span class="option-letter">C</span><span>网络延迟导致的</span></div>
+                        <div class="option" onclick="selectOption(this, 3, 3)"><span class="option-letter">D</span><span>用户输入太长了</span></div>
+                    </div>
+                    <div class="explanation" id="exp-3">
+                        <strong>解析：</strong>这种现象叫 "AI 幻觉"（Hallucination）。AI 本质是「文字接龙」，会基于概率生成看似合理的内容，但不保证内容真实准确。
+                    </div>
+                </div>
+
+                <!-- 第5题：进阶 -->
+                <div class="question" data-index="4">
+                    <span class="difficulty-badge badge-medium">📈 进阶</span>
+                    <div class="question-text">"生成式 AI"（Generative AI）和"判别式 AI"的主要区别是什么？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 4, 0)"><span class="option-letter">A</span><span>生成式 AI 会创造新内容，判别式 AI 只负责分类识别</span></div>
+                        <div class="option" onclick="selectOption(this, 4, 1)"><span class="option-letter">B</span><span>生成式 AI 更贵</span></div>
+                        <div class="option" onclick="selectOption(this, 4, 2)"><span class="option-letter">C</span><span>生成式 AI 只能写文章</span></div>
+                        <div class="option" onclick="selectOption(this, 4, 3)"><span class="option-letter">D</span><span>没有区别，是同一个东西</span></div>
+                    </div>
+                    <div class="explanation" id="exp-4">
+                        <strong>解析：</strong>生成式 AI（如 GPT、Midjourney）创造新内容；判别式 AI（如人脸识别、垃圾邮件分类）只做判断/分类，不创造新东西。
+                    </div>
+                </div>
+
+                <!-- 第6题：进阶 -->
+                <div class="question" data-index="5">
+                    <span class="difficulty-badge badge-medium">📈 进阶</span>
+                    <div class="question-text">GPT 里的 "1750亿参数"是什么意思？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 5, 0)"><span class="option-letter">A</span><span>训练数据有 1750 亿条</span></div>
+                        <div class="option" onclick="selectOption(this, 5, 1)"><span class="option-letter">B</span><span>模型内部可调节的"旋钮"数量</span></div>
+                        <div class="option" onclick="selectOption(this, 5, 2)"><span class="option-letter">C</span><span>模型能记住 1750 亿个单词</span></div>
+                        <div class="option" onclick="selectOption(this, 5, 3)"><span class="option-letter">D</span><span>运行时需要 1750 亿瓦电力</span></div>
+                    </div>
+                    <div class="explanation" id="exp-5">
+                        <strong>解析：</strong>参数是模型内部的可调节数值（类似"旋钮"），决定输入如何转换成输出。参数越多，模型表达能力越强，但也越耗资源。
+                    </div>
+                </div>
+
+                <!-- 第7题：专业 -->
+                <div class="question" data-index="6">
+                    <span class="difficulty-badge badge-hard">🔥 专业</span>
+                    <div class="question-text">Transformer 架构中的 "注意力机制"（Attention）主要解决了什么问题？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 6, 0)"><span class="option-letter">A</span><span>让模型能同时关注输入的不同部分，理解长距离依赖</span></div>
+                        <div class="option" onclick="selectOption(this, 6, 1)"><span class="option-letter">B</span><span>减少模型训练时间</span></div>
+                        <div class="option" onclick="selectOption(this, 6, 2)"><span class="option-letter">C</span><span>让模型变得更小</span></div>
+                        <div class="option" onclick="selectOption(this, 6, 3)"><span class="option-letter">D</span><span>提高图像分辨率</span></div>
+                    </div>
+                    <div class="explanation" id="exp-6">
+                        <strong>解析：</strong>注意力机制让模型在处理一个词时，能动态决定关注输入序列的哪些部分。比如翻译"bank"时，能根据上下文判断是"银行"还是"河岸"。
+                    </div>
+                </div>
+
+                <!-- 第8题：专业 -->
+                <div class="question" data-index="7">
+                    <span class="difficulty-badge badge-hard">🔥 专业</span>
+                    <div class="question-text">什么是 "Fine-tuning"（微调）？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 7, 0)"><span class="option-letter">A</span><span>调节电脑音量</span></div>
+                        <div class="option" onclick="selectOption(this, 7, 1)"><span class="option-letter">B</span><span>在大模型基础上，用特定数据进一步训练适配特定任务</span></div>
+                        <div class="option" onclick="selectOption(this, 7, 2)"><span class="option-letter">C</span><span>优化代码排版</span></div>
+                        <div class="option" onclick="selectOption(this, 7, 3)"><span class="option-letter">D</span><span>调整显示器亮度</span></div>
+                    </div>
+                    <div class="explanation" id="exp-7">
+                        <strong>解析：</strong>微调是在预训练好的大模型（如 GPT）基础上，用特定领域数据（如医疗、法律）进一步训练，让模型适配特定任务，比从头训练省资源。
+                    </div>
+                </div>
+
+                <!-- 第9题：行业黑话 -->
+                <div class="question" data-index="8">
+                    <span class="difficulty-badge badge-pro">👑 行业黑话</span>
+                    <div class="question-text">AI 公司常说的 "Inference"（推理）是指什么？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 8, 0)"><span class="option-letter">A</span><span>训练模型的过程</span></div>
+                        <div class="option" onclick="selectOption(this, 8, 1)"><span class="option-letter">B</span><span>模型训练好后，实际使用它生成答案/预测的过程</span></div>
+                        <div class="option" onclick="selectOption(this, 8, 2)"><span class="option-letter">C</span><span>模型的推理能力测试</span></div>
+                        <div class="option" onclick="selectOption(this, 8, 3)"><span class="option-letter">D</span><span>数据分析方法</span></div>
+                    </div>
+                    <div class="explanation" id="exp-8">
+                        <strong>解析：</strong>训练（Training）= 教 AI 学习；推理（Inference）= 用训练好的 AI 干活。比如 ChatGPT 回答你问题的过程就是推理。很多 AI 公司的商业模式就是按推理次数收费。
+                    </div>
+                </div>
+
+                <!-- 第10题：行业黑话 -->
+                <div class="question" data-index="9">
+                    <span class="difficulty-badge badge-pro">👑 行业黑话</span>
+                    <div class="question-text">"RAG"（检索增强生成）是一种什么技术？</div>
+                    <div class="options">
+                        <div class="option" onclick="selectOption(this, 9, 0)"><span class="option-letter">A</span><span>让大模型在回答前先查资料库，减少幻觉</span></div>
+                        <div class="option" onclick="selectOption(this, 9, 1)"><span class="option-letter">B</span><span>一种图像压缩算法</span></div>
+                        <div class="option" onclick="selectOption(this, 9, 2)"><span class="option-letter">C</span><span>机器人动作控制技术</span></div>
+                        <div class="option" onclick="selectOption(this, 9, 3)"><span class="option-letter">D</span><span>语音识别模型</span></div>
+                    </div>
+                    <div class="explanation" id="exp-9">
+                        <strong>解析：</strong>RAG = Retrieval-Augmented Generation。原理：用户提问时，先从知识库检索相关信息，再让大模型基于这些资料生成答案。这是目前解决 AI 幻觉的主流方案之一。
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" id="nextBtn" onclick="nextQuestion()" disabled>下一题</button>
+            </div>
+
+            <!-- 结果页面 -->
+            <div class="result" id="resultScreen">
+                <div class="result-icon" id="resultIcon">🎉</div>
+                <div class="result-score" id="resultScore">0/10</div>
+                <div class="result-title" id="resultTitle"></div>
+                <div class="result-desc" id="resultDesc"></div>
+                <button class="btn btn-primary" onclick="location.reload()">再测一次</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 正确答案索引
+        const correctAnswers = [1, 0, 1, 1, 0, 1, 0, 1, 1, 0];
+        let currentQuestion = 0;
+        let score = 0;
+        let selected = false;
+        const totalQuestions = 10;
+
+        function start() {
+            document.getElementById('startScreen').style.display = 'none';
+            document.getElementById('quizArea').style.display = 'block';
+            updateProgress();
+        }
+
+        function updateProgress() {
+            const progress = ((currentQuestion + 1) / totalQuestions) * 100;
+            document.getElementById('p').style.width = progress + '%';
+        }
+
+        function selectOption(element, questionIndex, optionIndex) {
+            if (selected) return;
+            selected = true;
+
+            const options = element.parentElement.querySelectorAll('.option');
+            options.forEach(opt => opt.classList.remove('selected'));
+            element.classList.add('selected');
+
+            const isCorrect = optionIndex === correctAnswers[questionIndex];
+            
+            setTimeout(() => {
+                if (isCorrect) {
+                    element.classList.remove('selected');
+                    element.classList.add('correct');
+                    score++;
+                } else {
+                    element.classList.add('wrong');
+                    options[correctAnswers[questionIndex]].classList.add('correct');
+                }
+
+                document.getElementById('exp-' + questionIndex).classList.add('show');
+                
+                const nextBtn = document.getElementById('nextBtn');
+                nextBtn.disabled = false;
+                if (currentQuestion === totalQuestions - 1) {
+                    nextBtn.textContent = '查看结果';
+                }
+            }, 300);
+        }
+
+        function nextQuestion() {
+            if (currentQuestion < totalQuestions - 1) {
+                document.querySelectorAll('.question')[currentQuestion].classList.remove('active');
+                currentQuestion++;
+                document.querySelectorAll('.question')[currentQuestion].classList.add('active');
+                selected = false;
+                document.getElementById('nextBtn').disabled = true;
+                document.getElementById('nextBtn').textContent = currentQuestion === totalQuestions - 1 ? '查看结果' : '下一题';
+                updateProgress();
+            } else {
+                showResult();
+            }
+        }
+
+        function showResult() {
+            document.getElementById('quizArea').style.display = 'none';
+            document.getElementById('resultScreen').classList.add('active');
+            document.getElementById('p').style.width = '100%';
+            
+            document.getElementById('resultScore').textContent = score + '/' + totalQuestions;
+            
+            let icon, title, desc;
+            if (score >= 9) {
+                icon = '🏆';
+                title = 'AI 大神！';
+                desc = '从入门到行业黑话全部掌握，建议你去当 AI 产品经理或布道师！';
+            } else if (score >= 7) {
+                icon = '🎓';
+                title = '准专业人士';
+                desc = '基础扎实，行业术语也懂不少，继续深入可以成为领域专家！';
+            } else if (score >= 5) {
+                icon = '📖';
+                title = '进阶学习者';
+                desc = '入门知识没问题，但专业术语还需要多了解，加油！';
+            } else if (score >= 3) {
+                icon = '🌱';
+                title = 'AI 小白';
+                desc = '刚起步很正常！建议多关注一些 AI 科普内容。';
+            } else {
+                icon = '🐣';
+                title = '纯萌新';
+                desc = '欢迎来到 AI 世界！从零开始学，你会看到一片新天地。';
+            }
+            
+            document.getElementById('resultIcon').textContent = icon;
+            document.getElementById('resultTitle').textContent = title;
+            document.getElementById('resultDesc').textContent = desc;
+        }
+    </script>
+</body>
+</html>
