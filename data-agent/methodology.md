@@ -22,15 +22,16 @@
 1. 整体架构(本机 ↔ 开发机)
 2. 6 条方法论提炼
 3. 取数:MCP + 按天分批 + 长消息补全
-4. 缓存:可重入是定时任务的命门
-5. 看板:单文件 HTML 的极简哲学
-6. 筛选:所有过滤都跑在内存里
-7. 会话展示:嵌套行 + 折叠
-8. 定时:拆分本地与服务器,各干其能
-9. 部署:tar over ssh + python http.server
-10. 复盘:踩过的坑与权衡
-11. 复用清单:换个数据集要改什么
-12. 一句话总结
+4. **准确性:数据看板的命门(含"为何不让 LLM 进数据流")**
+5. 缓存:可重入是定时任务的命门
+6. 看板:单文件 HTML 的极简哲学
+7. 筛选:所有过滤都跑在内存里
+8. 会话展示:嵌套行 + 折叠
+9. 定时:拆分本地与服务器,各干其能
+10. 部署:tar over ssh + python http.server
+11. 复盘:踩过的坑与权衡
+12. 复用清单:换个数据集要改什么
+13. 一句话总结
 
 ---
 
@@ -158,7 +159,161 @@ while offset < max_len:
 
 ---
 
-## 4. 缓存:可重入是定时任务的命门
+## 4. 准确性:数据看板的命门
+
+看板能跑起来不算赢;**跑出来的数对得上**才是。这套系统在 7 个失真点上各设了一道防线,外加每周一次自动对账——让"准确"成为可被验证、可被回溯、可被报警的状态,而不是一句"应该没问题"。
+
+### 4.0 前提:数据流里没有大模型
+
+这是这套方案数据可信的**第一前提**,而不是某条优化技巧——所有"取数 → 解析 → 聚合 → 渲染"全是确定性 Python 代码,**没有任何一步过 LLM**。LLM 只参与了写代码的过程("帮我写个按天查询"),不参与代码运行后处理任何一行真实数据。
+
+| 容易出错的做法(LLM 进数据流) | 本方案的做法(确定性管道) |
+|---|---|
+| "让 GPT 帮我汇总一下这份 CSV" → 数字会被改写、四舍五入、幻觉补全 | `requests.post()` + 固定 SQL 查上游 → 字节级一致 |
+| "AI 帮我从消息里抽取意图分类" → 可能 90% 准确,但**哪一行错了你不知道** | `csv.reader()` 解析 → 标准库实现,输入相同输出相同 |
+| "用 LLM 判断这条会话有没有解决问题" → 同一条数据每次跑结果还不一样 | `collections.Counter` / `set` 聚合 → 完全确定 |
+| "让 Agent 自己写 SQL 然后跑" → 字段名、表名、过滤条件都可能被胡编 | `json.dumps` 注入 HTML → 没有改写空间 |
+
+**数据流逐点(每一步都能用单元测试钉死):**
+
+```python
+# 1. 查询:HTTP POST 走 dclaw-mcp,返回固定格式 CSV
+csv_text = requests.post(url, headers=headers, json={...}).json()['data']
+
+# 2. 解析:标准库 csv.reader,无任何模型参与
+reader = csv.DictReader(io.StringIO(csv_text))
+rows = list(reader)
+
+# 3. 聚合:纯 Python 字典/集合,结果可被 assert 锁死
+by_dept = collections.defaultdict(set)
+for r in rows:
+    by_dept[r['dept']].add(r['email'])
+
+# 4. 渲染:模板字符串替换,没有"AI 重写"
+html = template.replace("<!--DATA-->",
+       f"<script>R={json.dumps(payload)}</script>")
+```
+
+每一步都满足「相同输入 → 相同输出」。这意味着:
+
+- **可单元测试**:`assert sum(c.values()) == 27041` 直接钉数字;
+- **可二分定位**:对账失败时,逐步打印中间值即可锁定哪一步偏差;
+- **可重放**:给同一份 CSV 跑十次,HTML 字节级一致——这是 LLM 流水线给不了的特性;
+- **可审计**:同事可以看代码确认"我看到的数字 = 数据库的数字 + 一段确定性变换",不必相信任何"模型也许是对的"。
+
+> **分清 "AI 写代码" 和 "AI 处理数据" 的边界**:前者把人脑活外包出去(一次性成本,写完就固化),后者让 LLM 介入运行时(每次跑都引入不确定性)。**能用 Python 写死的,绝不让模型在运行时参与。** 看板这种"对得上的数字"场景,应该 100% 锁在前者。
+
+> ⚠️ **什么时候才该让 LLM 进数据流?** 当任务本身就是"语义理解"——比如"对每条会话打情感标签"、"按主题聚类"——这时 LLM 是工具不是 bug。但即使在这种场景,也应该把 LLM 输出当成"一列原始字段"**持久化**下来,再让确定性管道汇总它,*不要*每次渲染都重跑模型。
+
+### 4.1 可能让数据不准的 7 个口子
+
+| # | 失真点 | 表现 | 所在环节 |
+|---|---|---|---|
+| 1 | SQL 截断 / 风控限流 | 返回行数比真实少;HTTP 502;HTTP 200 但只有部分行 | 查询网关 |
+| 2 | 长字段截断 | 消息内容被砍到 1800 字符,"问题排查"页缺上下文 | 查询网关 |
+| 3 | 跨日边界 | 时区错位,凌晨数据落到错误的 `date_dt` 分区 | 分片定义 |
+| 4 | 历史天缓存被污染 | 上游回补了昨天的脏数据,但本地缓存还停留在旧版本 | 缓存层 |
+| 5 | 当天命中缓存 | "今天"的数被锁死成首次跑那一刻的快照 | 缓存层 |
+| 6 | CSV 解析错位 | 消息内容含逗号/换行,`split(',')` 把一行劈成多行 | 解析层 |
+| 7 | 前端聚合 bug | Set 用错 key、JS Number 精度、隐式 sort 改原数组 | 看板渲染 |
+
+### 4.2 7 条对策(每条对应一道防线)
+
+1. **查询级 invariant:哨兵字段。** 每次 SELECT 同时取 `COUNT(*)` 与 `SUM(CHAR_LENGTH(message_content)>1800)` 两个数,写到日志。如果某天总行数突然砍半、或截断行数从 200 变成 0——不是数据变了,是表结构/列名变了,立即告警。
+2. **长字段:分段补全 + 长度校验。** 对 `CHAR_LENGTH > 1800` 的行用 `SUBSTRING(content, offset, 2000)` 推进式拼回。拼完后断言 `len(restored) >= 1800`,否则该行打 `extension_failed=true` 标记并在看板上用红色边框显示——**宁可显眼地出错,不可悄悄丢失**。
+3. **跨日边界:分片 key 唯一来自上游。** 不要在客户端做"按本地时间归类",直接用上游表的 `date_dt` 字段做 key。多机统一用 UTC 也行,但全链路只能有一种时区——别中途切换。
+4. **历史天 invariant:checksum 漂移检测。** 每次跑完,把每个历史天 CSV 的 SHA256 写到 `cache/checksums.json`。下次启动先比对:上游补了昨天的数 → 哈希变了 → 自动失效那一天的缓存重查。
+5. **当天永不命中缓存。** 这条规则的本质不是性能,是**"昨天写的数 ≠ 今天的真相"**。当天数据只要还有可能更新,缓存就是在制造谎言。
+6. **解析:用 `csv.reader`,永远不要 `split(',')`。** CSV 里只要有一个用户在消息里输入了"你好,我想问下...",自己 split 就当场错位 5 个字段。Python 标准库的 `csv.reader` 正确处理引号转义;一行代码的成本,省一辈子的事故。
+7. **跨源交叉验证:第二条独立链路当裁判。** 主链路从 SQL 网关算"今日活跃用户数";旁路 playwright 从 4 个 Streamlit Agent 后台抓 PV/UV。两个数本来就该相近——把它们并排画在看板顶部,差异 > 5% 自动飘红。**真正的准确性 = 两条不同源数据互相打脸的余量很小**。
+
+### 4.3 嵌入"数据健康度"自检面板
+
+看板顶部直接显示一组关键指标,**异常用户自己就能发现**,不必等 PM 来质问:
+
+```python
+def build_health_panel(p2_rows, today, yesterday):
+    today_rows = [r for r in p2_rows if r['d'] == today]
+    yest_rows  = [r for r in p2_rows if r['d'] == yesterday]
+    truncated  = sum(1 for r in p2_rows if len(r.get('msg', '')) >= 1800)
+
+    return {
+        'total_rows':        len(p2_rows),
+        'unique_sids':       len({r['sid']   for r in p2_rows}),
+        'unique_users':      len({r['email'] for r in p2_rows}),
+        'date_min':          min(r['d'] for r in p2_rows),
+        'date_max':          max(r['d'] for r in p2_rows),
+        'today_rows':        len(today_rows),
+        'yest_rows':         len(yest_rows),
+        # 同比 0.5–1.5 是正常区间;<0.3 或 >3 飘红
+        'today_yest_ratio':  round(len(today_rows) / max(1, len(yest_rows)), 2),
+        'truncated_rows':    truncated,    # 突变 0 或暴增都是警报
+        'extension_failed':  sum(1 for r in p2_rows if r.get('ext_failed')),
+        'generated_at':      datetime.now().isoformat(timespec='seconds'),
+    }
+```
+
+把它渲染在 HTML 顶部:
+
+```html
+<div class="health">
+  <span class="ok">✓ 共 27,041 行 / 1,827 会话 / 412 用户</span>
+  <span class="ok">✓ 时间范围 2026-05-22 ～ 2026-06-04</span>
+  <span class="warn">⚠ 今/昨日比 0.42(昨日数据可能尚未补全)</span>
+  <span class="ok">✓ 截断行 213(与昨日 198 同量级)</span>
+  <span class="muted">生成于 2026-06-05 09:12:34</span>
+</div>
+```
+
+> 💡 **面板设计原则**:每个数都要能让人 5 秒内判断"对不对"。`27,041 行` 是有用的(可以和昨天比);`generated_at` 是有用的(可以判断是否过期);但 `SHA256` 之类的内部哈希*不要*放——人脑读不了。
+
+### 4.4 主动对账:每周一次的"地真"校验
+
+自检面板能发现"和昨天比异常",但发现不了"系统性偏差稳定 5 天了"。所以每周跑一次脚本,从历史数据里随机抽 5 个会话 ID,**用最原始的方式**查上游表,比对消息条数、首末时间、用户邮箱:
+
+```python
+# scripts/audit.py(cron 周一 9 点跑)
+import random, csv, sys
+from generate_report import mcp_session, _query_one_day
+
+def audit(date_str, n=5):
+    # 1) 从本地 CSV 读取声称的"事实"
+    rows = list(csv.DictReader(open(f'cache/<dataset>_{date_str}.csv')))
+    sample = random.sample(rows, min(n, len(rows)))
+
+    # 2) 用一条独立的 SQL 重新查这些会话 ID
+    sids = "', '".join({r['conversation_id'] for r in sample})
+    sql = f"SELECT conversation_id, COUNT(*) c, MIN(ts) mn, MAX(ts) mx " \
+          f"FROM datasource_table WHERE conversation_id IN ('{sids}') " \
+          f"GROUP BY conversation_id"
+    truth = run_sql(sql)  # 直查上游,绕过本地缓存
+
+    # 3) 比对
+    mismatch = []
+    for sid, t in truth.items():
+        local = [r for r in rows if r['conversation_id'] == sid]
+        if len(local) != t['c']:
+            mismatch.append((sid, len(local), t['c']))
+    if mismatch:
+        print('AUDIT FAILED', mismatch, file=sys.stderr); sys.exit(1)
+    print(f'audit ok: {len(sample)} sessions matched')
+```
+
+跑失败就退非零、cron 邮件告警。这套抽样 + 直连上游对账,**等价于在数据流里随机插了一个不被你的代码影响的"探针"**——它能发现自检面板永远发现不了的稳定性偏差。
+
+### 4.5 准确性的"3 道防线"心智模型
+
+| 第 1 道:进数前 | 第 2 道:缓存层 | 第 3 道:呈现前 |
+|---|---|---|
+| 哨兵字段(COUNT、CHAR_LENGTH 截断数) | 历史天 SHA256 校验,漂移即失效 | 顶部健康度面板(用户自己看) |
+| 分片 key 来自上游(不本地推算) | 当天永不缓存 | 跨源 PV/UV 交叉验证 |
+| 长字段补全 + 长度断言 | 原子写(避免读到半截) | 每周抽样直查上游对账 |
+
+> **真正的准确性是被持续验证的状态,不是一次性把代码写对。** 把每个环节的"我以为它对"换成"我有办法证明它对"——这就是从"能跑"到"能托付"的全部距离。
+
+---
+
+## 5. 缓存:可重入是定时任务的命门
 
 缓存是性能优化,更是**可重入性**。把它做对,cron 任务才敢放心定时跑。
 
@@ -188,7 +343,7 @@ os.replace(tmp, output_path)   # POSIX 原子操作,读端不会读到半截
 
 ---
 
-## 5. 看板:单文件 HTML 的极简哲学
+## 6. 看板:单文件 HTML 的极简哲学
 
 最终产物是一个**单文件 HTML**——50MB,包含全部数据 + 全部 JS + 全部样式。没有后端、没有数据库、没有登录态。
 
@@ -241,7 +396,7 @@ function rdt(data){
 
 ---
 
-## 6. 筛选:所有过滤都跑在内存里
+## 7. 筛选:所有过滤都跑在内存里
 
 9 个筛选维度(日期、部门、Agent、来源、角色、用户名、邮箱、会话 ID、日期-小时)全部在前端跑。代码不到 30 行。
 
@@ -276,7 +431,7 @@ function fp2(){
 
 ---
 
-## 7. 会话展示:嵌套行 + 折叠
+## 8. 会话展示:嵌套行 + 折叠
 
 "问题排查"页要看完整对话上下文。把消息按 `conversation_id` 聚合成会话行,点击展开看全部消息——纯 CSS 做折叠,零 JS 框架。
 
@@ -309,7 +464,7 @@ function tgs(id){
 
 ---
 
-## 8. 定时:拆分本地与服务器,各干其能
+## 9. 定时:拆分本地与服务器,各干其能
 
 最初版本:本机全包。结果就是要 7×24 开机连 VPN 才行。重构后:**本机只做开发机做不到的事**。
 
@@ -359,7 +514,7 @@ curl -sS --max-time 3 -o /dev/null http://127.0.0.1:8080/ \
 
 ---
 
-## 9. 部署:tar over ssh + python http.server
+## 10. 部署:tar over ssh + python http.server
 
 没有 nginx、没有 docker、没有 CI/CD。两条命令搞定文件同步,一行命令搞定 HTTP 服务。
 
@@ -385,7 +540,7 @@ cd /srv/report && nohup python3 -m http.server 8080 --bind 0.0.0.0 &
 
 ---
 
-## 10. 复盘:踩过的坑与权衡
+## 11. 复盘:踩过的坑与权衡
 
 真正贵的经验不是"做对了什么",是"做错过什么"。
 
@@ -403,7 +558,7 @@ cd /srv/report && nohup python3 -m http.server 8080 --bind 0.0.0.0 &
 
 ---
 
-## 11. 复用清单:换个数据集要改什么
+## 12. 复用清单:换个数据集要改什么
 
 如果你想拿这套架构做自己团队的数据看板,按下面这张表逐项替换即可。
 
@@ -431,7 +586,7 @@ cd /srv/report && nohup python3 -m http.server 8080 --bind 0.0.0.0 &
 
 ---
 
-## 12. 一句话总结
+## 13. 一句话总结
 
 > 把昂贵的查询缓存住、把数据和视图分开、把客户端能干的不放服务端、让两台机器各干其能、让定时任务幂等到挂了无所谓——剩下的**不是工程问题,是审美问题**。
 
