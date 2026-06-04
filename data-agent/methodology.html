@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>从一行 SQL 到一张周报 · 数据看板全链路实战</title>
+<style>
+  :root{
+    --bg:#fafbfc; --fg:#1f2328; --muted:#656d76; --line:#d0d7de;
+    --accent:#0969da; --accent-bg:#ddf4ff; --warn:#bf8700; --warn-bg:#fff8c5;
+    --good:#1a7f37; --good-bg:#dafbe1; --bad:#cf222e; --bad-bg:#ffebe9;
+    --code-bg:#f6f8fa; --card:#fff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+    background:var(--bg);color:var(--fg);font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:48px 24px 80px}
+
+  /* 封面 */
+  header.cover{padding:48px 0 32px;border-bottom:1px solid var(--line);margin-bottom:40px}
+  header.cover .eyebrow{color:var(--accent);font-size:13px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px}
+  header.cover h1{font-size:36px;line-height:1.25;font-weight:700;margin-bottom:14px;letter-spacing:-.5px}
+  header.cover h1 .sub{display:block;font-size:18px;color:var(--muted);font-weight:500;margin-top:6px}
+  header.cover .meta{color:var(--muted);font-size:13px;display:flex;gap:20px;flex-wrap:wrap}
+  header.cover .meta span::before{content:"·";margin-right:8px;color:var(--line)}
+  header.cover .meta span:first-child::before{content:""}
+
+  /* TL;DR 卡片 */
+  .tldr{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px 28px;margin-bottom:36px;box-shadow:0 1px 0 rgba(31,35,40,.04)}
+  .tldr h3{font-size:13px;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+  .tldr p{margin-bottom:8px}
+  .tldr p:last-child{margin-bottom:0}
+  .tldr .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin-top:14px;font-size:13.5px}
+  .tldr .kv dt{color:var(--muted);font-weight:500}
+  .tldr .kv dd{color:var(--fg)}
+
+  /* 目录 */
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px 24px;margin-bottom:48px}
+  nav.toc h3{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+  nav.toc ol{list-style:none;counter-reset:toc;column-count:2;column-gap:32px}
+  nav.toc li{counter-increment:toc;padding:4px 0;break-inside:avoid}
+  nav.toc li::before{content:counter(toc,decimal-leading-zero);color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px;margin-right:10px}
+  nav.toc a{color:var(--fg);text-decoration:none;border-bottom:1px solid transparent}
+  nav.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+
+  /* 章节 */
+  section{margin-bottom:56px;scroll-margin-top:24px}
+  h2{font-size:26px;font-weight:700;margin-bottom:8px;letter-spacing:-.3px;display:flex;align-items:baseline;gap:14px}
+  h2 .num{font-size:14px;color:var(--accent);background:var(--accent-bg);padding:3px 10px;border-radius:20px;font-weight:600;letter-spacing:.3px}
+  h2 + .lede{color:var(--muted);font-size:15.5px;margin-bottom:24px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+  h3{font-size:18px;font-weight:600;margin:28px 0 10px}
+  h3 .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;letter-spacing:.3px;text-transform:uppercase}
+  h3 .tag.problem{background:var(--bad-bg);color:var(--bad)}
+  h3 .tag.solution{background:var(--good-bg);color:var(--good)}
+  h3 .tag.takeaway{background:var(--warn-bg);color:var(--warn)}
+  p{margin:0 0 12px}
+  p+p{margin-top:0}
+  ul,ol{margin:0 0 14px 22px}
+  ul li,ol li{margin-bottom:4px}
+
+  /* 代码块 */
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.55;margin:10px 0 16px;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+  pre code{font-family:inherit}
+  code:not(pre code){background:var(--code-bg);padding:1.5px 6px;border-radius:4px;font-size:.9em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border:1px solid var(--line)}
+  .code-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:-6px;padding-left:2px}
+
+  /* 引语 */
+  blockquote{border-left:3px solid var(--accent);background:var(--accent-bg);padding:12px 18px;margin:14px 0;border-radius:0 6px 6px 0;font-size:14.5px}
+  blockquote.warn{border-left-color:var(--warn);background:var(--warn-bg)}
+  blockquote.tip{border-left-color:var(--good);background:var(--good-bg)}
+  blockquote strong{color:var(--fg)}
+
+  /* 表格 */
+  table{width:100%;border-collapse:collapse;margin:14px 0 18px;font-size:13.5px}
+  thead th{background:var(--code-bg);text-align:left;padding:10px 12px;border-bottom:2px solid var(--line);font-weight:600}
+  tbody td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:hover{background:var(--code-bg)}
+  td code{font-size:12px;white-space:nowrap}
+
+  /* 双栏对比 */
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0 18px}
+  .compare .col{border:1px solid var(--line);border-radius:8px;padding:14px 16px;background:var(--card)}
+  .compare .col.before{background:#fff8f8;border-color:#ffd9d4}
+  .compare .col.after{background:#f4fff7;border-color:#bbe5c1}
+  .compare h4{font-size:13px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;font-weight:700}
+  .compare .col.before h4{color:var(--bad)}
+  .compare .col.after h4{color:var(--good)}
+  .compare ul{margin:0 0 0 18px;font-size:13.5px}
+  .compare ul li{margin-bottom:3px}
+
+  /* 方法论卡片 */
+  .principles{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin:8px 0 24px}
+  .pcard{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;position:relative;overflow:hidden}
+  .pcard .pn{position:absolute;top:14px;right:18px;font-size:42px;font-weight:800;color:var(--code-bg);letter-spacing:-2px;font-variant-numeric:tabular-nums}
+  .pcard h4{font-size:15.5px;font-weight:700;margin-bottom:6px;position:relative}
+  .pcard p{font-size:13.5px;color:var(--muted);margin:0;position:relative;line-height:1.55}
+
+  /* 架构图 */
+  .arch{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:28px 16px;margin:18px 0 8px}
+  .arch svg{display:block;margin:0 auto;max-width:100%;height:auto}
+  .arch-caption{text-align:center;color:var(--muted);font-size:12.5px;margin-top:10px}
+
+  /* 流程箭头列表 */
+  .stages{counter-reset:st;list-style:none;margin:14px 0 18px;padding:0}
+  .stages li{counter-increment:st;display:grid;grid-template-columns:32px 1fr;gap:12px;padding:10px 0;border-bottom:1px dashed var(--line)}
+  .stages li:last-child{border-bottom:none}
+  .stages li::before{content:counter(st);background:var(--accent);color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+  .stages li b{font-weight:600}
+  .stages li small{color:var(--muted);font-size:12px;display:block;margin-top:2px}
+
+  /* footer */
+  footer{margin-top:80px;padding-top:30px;border-top:1px solid var(--line);text-align:center;color:var(--muted);font-size:13px}
+  footer p{margin-bottom:6px}
+
+  /* 标签 */
+  .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;letter-spacing:.3px;background:var(--code-bg);color:var(--muted);border:1px solid var(--line);margin-right:4px}
+  .pill.ok{background:var(--good-bg);color:var(--good);border-color:#bbe5c1}
+  .pill.no{background:var(--bad-bg);color:var(--bad);border-color:#ffd9d4}
+
+  @media(max-width:720px){
+    .wrap{padding:24px 16px 60px}
+    header.cover h1{font-size:28px}
+    nav.toc ol{column-count:1}
+    .principles{grid-template-columns:1fr}
+    .compare{grid-template-columns:1fr}
+  }
+  @media print{
+    body{background:#fff}
+    .wrap{max-width:none;padding:0 16px}
+    nav.toc,footer{display:none}
+    section{page-break-inside:avoid;margin-bottom:30px}
+    pre{font-size:10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ════ 封面 ════════════════════════════════════════════ -->
+<header class="cover">
+  <div class="eyebrow">数据看板 · 全链路实战</div>
+  <h1>从一行 SQL 到一张周报
+    <span class="sub">每天自动跑、随时打开看 —— 一份给团队复用的工程手册</span>
+  </h1>
+  <div class="meta">
+    <span>取数 · 缓存 · 渲染 · 筛选 · 调度 · 部署</span>
+    <span>~600 行 Python + 一个单文件 HTML</span>
+    <span>一次搭建，长期受益</span>
+  </div>
+</header>
+
+<!-- ════ TL;DR ═══════════════════════════════════════════ -->
+<div class="tldr">
+  <h3>TL;DR — 这套东西能给你什么</h3>
+  <p>把一个内部数据集（约 27k 行/14 天）变成一份<strong>团队随时能打开的交互式看板</strong>：
+  支持日期范围、部门、Agent、来源等多维筛选，按会话分组展开消息明细，每天定点自动更新到 HTTP 服务，全程零运维。</p>
+  <dl class="kv">
+    <dt>数据源</dt><dd>公司内部数据查询网关（按天 SQL 查询）</dd>
+    <dt>产物</dt><dd>单文件 HTML（约 50MB，含全部数据 + ECharts），URL 可直接分享</dd>
+    <dt>触发</dt><dd>开发机 cron 每小时跑一次（9:00–23:00）</dd>
+    <dt>核心耗时</dt><dd>首次 ~12 分钟，常态 ~24 秒（全靠按天缓存）</dd>
+    <dt>代码量</dt><dd>Python ~500 行 / 模板 HTML ~190 行（含 ECharts）</dd>
+  </dl>
+</div>
+
+<!-- ════ 目录 ════════════════════════════════════════════ -->
+<nav class="toc">
+  <h3>目录</h3>
+  <ol>
+    <li><a href="#arch">全链路架构图</a></li>
+    <li><a href="#principles">5 条方法论提炼</a></li>
+    <li><a href="#fetch">取数：MCP + 按天分批 + 长消息补全</a></li>
+    <li><a href="#cache">缓存：可重入是定时任务的命门</a></li>
+    <li><a href="#render">看板：单文件 HTML 的极简哲学</a></li>
+    <li><a href="#filter">筛选：所有过滤都跑在内存里</a></li>
+    <li><a href="#session">会话展示：嵌套行 + 折叠</a></li>
+    <li><a href="#cron">定时：拆分本地与服务器，各干其能</a></li>
+    <li><a href="#deploy">部署：tar over ssh + python http.server</a></li>
+    <li><a href="#pitfalls">复盘：踩过的坑与权衡</a></li>
+    <li><a href="#reuse">复用清单：换个数据集要改什么</a></li>
+  </ol>
+</nav>
+
+<!-- ════ 1) 架构图 ═══════════════════════════════════════ -->
+<section id="arch">
+  <h2><span class="num">01</span> 全链路架构图</h2>
+  <p class="lede">先看一张图把整个系统的形状立起来——后面每一节都是把这张图的某一段拆开讲。</p>
+
+  <div class="arch">
+    <svg viewBox="0 0 860 480" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#0969da"/>
+        </marker>
+        <marker id="arrgrey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#656d76"/>
+        </marker>
+      </defs>
+      <style>
+        .lbl{font:600 13px -apple-system,sans-serif;fill:#1f2328}
+        .small{font:11px -apple-system,sans-serif;fill:#656d76}
+        .box{stroke:#d0d7de;stroke-width:1.5;rx:8;ry:8}
+        .b-data{fill:#ddf4ff}
+        .b-script{fill:#fff8c5}
+        .b-cache{fill:#dafbe1}
+        .b-out{fill:#fbefff}
+        .b-user{fill:#fff;stroke-dasharray:4,3}
+        .arrow{stroke:#0969da;stroke-width:2;fill:none}
+        .arrow-grey{stroke:#656d76;stroke-width:1.5;fill:none;stroke-dasharray:4,3}
+        .group-bg{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1;rx:10;ry:10}
+        .group-lbl{font:600 11px -apple-system,sans-serif;fill:#656d76;letter-spacing:.5px;text-transform:uppercase}
+      </style>
+
+      <!-- 分组：左 = 本机 mac，右 = 开发机 -->
+      <rect x="20" y="20" width="380" height="440" class="group-bg"/>
+      <text x="35" y="40" class="group-lbl">本机 macOS（cron :10）</text>
+
+      <rect x="460" y="20" width="380" height="440" class="group-bg"/>
+      <text x="475" y="40" class="group-lbl">开发机 Linux（cron :12）</text>
+
+      <!-- 数据源 -->
+      <rect x="540" y="60" width="220" height="46" class="box b-data"/>
+      <text x="650" y="80" text-anchor="middle" class="lbl">数据查询网关</text>
+      <text x="650" y="97" text-anchor="middle" class="small">SQL 接口 · 内网</text>
+
+      <!-- agent 后台 4 个 -->
+      <rect x="50" y="60" width="320" height="46" class="box b-data"/>
+      <text x="210" y="80" text-anchor="middle" class="lbl">4 个 Streamlit Agent 后台（PV/UV）</text>
+      <text x="210" y="97" text-anchor="middle" class="small">需 playwright + chromium</text>
+
+      <!-- 本机抓 agent -->
+      <rect x="50" y="148" width="320" height="56" class="box b-script"/>
+      <text x="210" y="170" text-anchor="middle" class="lbl">scrape_agents.py</text>
+      <text x="210" y="190" text-anchor="middle" class="small">playwright 抓 4 个后台 → agents.json</text>
+
+      <line x1="210" y1="106" x2="210" y2="146" class="arrow" marker-end="url(#arr)"/>
+
+      <!-- 本机 cache -->
+      <rect x="50" y="234" width="320" height="46" class="box b-cache"/>
+      <text x="210" y="254" text-anchor="middle" class="lbl">cache/agents.json</text>
+      <text x="210" y="271" text-anchor="middle" class="small">原子写：写 .tmp 再 rename</text>
+      <line x1="210" y1="206" x2="210" y2="232" class="arrow" marker-end="url(#arr)"/>
+
+      <!-- scp 到开发机 -->
+      <rect x="50" y="316" width="320" height="46" class="box b-script"/>
+      <text x="210" y="336" text-anchor="middle" class="lbl">scp → 开发机</text>
+      <text x="210" y="353" text-anchor="middle" class="small">update_report.sh（本机）</text>
+      <line x1="210" y1="280" x2="210" y2="314" class="arrow" marker-end="url(#arr)"/>
+
+      <!-- 跨机箭头 -->
+      <line x1="370" y1="338" x2="600" y2="338" class="arrow" marker-end="url(#arr)"/>
+      <text x="485" y="332" text-anchor="middle" class="small">SSH 推送 agents.json</text>
+
+      <!-- 开发机 generate_report -->
+      <rect x="500" y="148" width="300" height="68" class="box b-script"/>
+      <text x="650" y="170" text-anchor="middle" class="lbl">generate_report.py</text>
+      <text x="650" y="188" text-anchor="middle" class="small">查询 → 缓存命中 → 拼装</text>
+      <text x="650" y="204" text-anchor="middle" class="small">--agents-json 读本机推来的数据</text>
+      <line x1="650" y1="106" x2="650" y2="146" class="arrow" marker-end="url(#arr)"/>
+
+      <!-- 开发机 cache CSV -->
+      <rect x="500" y="244" width="140" height="46" class="box b-cache"/>
+      <text x="570" y="265" text-anchor="middle" class="lbl">cache/*.csv</text>
+      <text x="570" y="280" text-anchor="middle" class="small">一天一文件</text>
+
+      <rect x="660" y="244" width="140" height="46" class="box b-cache"/>
+      <text x="730" y="265" text-anchor="middle" class="lbl">agents.json</text>
+      <text x="730" y="280" text-anchor="middle" class="small">本机推送来</text>
+
+      <line x1="650" y1="216" x2="650" y2="242" class="arrow" marker-end="url(#arr)"/>
+
+      <!-- 模板 + 输出 -->
+      <rect x="500" y="316" width="300" height="46" class="box b-out"/>
+      <text x="650" y="336" text-anchor="middle" class="lbl">templates/report.html</text>
+      <text x="650" y="353" text-anchor="middle" class="small">单文件 ECharts 模板</text>
+      <line x1="650" y1="290" x2="650" y2="314" class="arrow" marker-end="url(#arr)"/>
+
+      <!-- 报告 -->
+      <rect x="500" y="396" width="300" height="46" class="box b-out"/>
+      <text x="650" y="416" text-anchor="middle" class="lbl">/srv/report/&lt;project&gt;/index.html</text>
+      <text x="650" y="431" text-anchor="middle" class="small">~50MB · http.server 8080 提供</text>
+      <line x1="650" y1="362" x2="650" y2="394" class="arrow" marker-end="url(#arr)"/>
+
+      <!-- 用户访问 -->
+      <rect x="50" y="396" width="320" height="46" class="box b-user"/>
+      <text x="210" y="416" text-anchor="middle" class="lbl">同事浏览器</text>
+      <text x="210" y="431" text-anchor="middle" class="small">http://&lt;dev-server&gt;:8080/&lt;project&gt;/</text>
+      <line x1="500" y1="419" x2="372" y2="419" class="arrow-grey" marker-end="url(#arrgrey)"/>
+    </svg>
+    <div class="arch-caption">取数与渲染落在开发机；本机只承担"开发机做不到"的事——抓需要浏览器的 Streamlit 后台。</div>
+  </div>
+</section>
+
+<!-- ════ 2) 方法论 ═══════════════════════════════════════ -->
+<section id="principles">
+  <h2><span class="num">02</span> 5 条方法论提炼</h2>
+  <p class="lede">真正能复用到下一个项目的不是代码，是这几条思考方式。先放在前面，后面每节都会引用。</p>
+
+  <div class="principles">
+    <div class="pcard">
+      <div class="pn">01</div>
+      <h4>先把"昂贵"的隔离出来</h4>
+      <p>把成本最高的环节（远程查询、外部 API、浏览器抓取）单独标记 → 加缓存 → 决定是否要"按天/按 ID"分片。一旦它能复用，整个流程的体感就从"分钟"变成"秒"。</p>
+    </div>
+    <div class="pcard">
+      <div class="pn">02</div>
+      <h4>幂等，让重跑无害</h4>
+      <p>定时任务最怕"中间挂了重启就出问题"。每一步都设计成「再跑一次结果一样」：写文件用临时名 + rename、缓存按天 key、推送先校验目标。挂了？再跑一次。</p>
+    </div>
+    <div class="pcard">
+      <div class="pn">03</div>
+      <h4>数据和视图分离</h4>
+      <p>查询/解析输出纯 JSON，前端模板只负责渲染。这样：模板可以独立改样式、JSON 可以单独调试、最终塞进 <code>&lt;!--DATA--&gt;</code> 占位符。两边的人/AI 不会互相阻塞。</p>
+    </div>
+    <div class="pcard">
+      <div class="pn">04</div>
+      <h4>能在客户端做的别在服务端做</h4>
+      <p>27k 行数据在浏览器里跑筛选/排序/分页毫无压力。后端只负责"喂一次全量 JSON"。省掉了一整套 Web 服务、登录态、SQL 重查的复杂度。</p>
+    </div>
+    <div class="pcard">
+      <div class="pn">05</div>
+      <h4>让两台机器各干其能</h4>
+      <p>本机能装 chromium、能上外网；开发机能直连内网数据、能 7×24 跑 cron。不要让一台机器扛所有事——按"它擅长什么"切分职责，比"什么都能装"省心十倍。</p>
+    </div>
+    <div class="pcard">
+      <div class="pn">06</div>
+      <h4>日志要能回答"为什么没跑"</h4>
+      <p>每次 cron 运行先打时间戳、网络可达性、关键文件 mtime。出问题时翻日志一秒定位是<strong>没触发</strong>、<strong>触发了但网络挂</strong>、还是<strong>跑完了但没生效</strong>——这是定时任务运维的全部秘密。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ════ 3) 取数 ═══════════════════════════════════════════ -->
+<section id="fetch">
+  <h2><span class="num">03</span> 取数：MCP + 按天分批 + 长消息补全</h2>
+  <p class="lede">数据集 14 天约 27k 行、含长文本会话内容。一次性 SELECT 会撞两个限制：网关大数据量风控、消息字段被截断到 1800 字符。</p>
+
+  <h3>问题 <span class="tag problem">PROBLEM</span></h3>
+  <ul>
+    <li>SQL 网关单次返回大于阈值会被风控拦截；</li>
+    <li>长消息字段（用户/AI 对话内容）被截断在 1800 字符，对"问题排查"页面是硬伤；</li>
+    <li>每次跑都查 14 天，绝大多数是浪费——历史天数据已经不变了。</li>
+  </ul>
+
+  <h3>方案 <span class="tag solution">SOLUTION</span></h3>
+  <p>三步走，每步对应一个独立函数：</p>
+  <ol class="stages">
+    <li><b>初始化 MCP 会话。</b><small>一次 <code>initialize</code> + <code>notifications/initialized</code> 拿到 <code>Mcp-Session-Id</code>，后续所有工具调用都带这个 header。</small></li>
+    <li><b>按天循环 SELECT。</b><small><code>WHERE date_dt = '2026-06-04'</code>，每天一个文件名 <code>cache/&lt;dataset&gt;_YYYY-MM-DD.csv</code>，避开大数据量限制。</small></li>
+    <li><b>长消息分段补全。</b><small>对 <code>CHAR_LENGTH(message_content) &gt; 1800</code> 的行，用 <code>SUBSTRING(content, offset, 2000)</code> 分段查，一段段拼回去。</small></li>
+  </ol>
+
+  <div class="code-label">关键代码片段（按天查 + 缓存命中跳过）</div>
+<pre><code>for d in dates:
+    csv_file = _cache_path(cache_dir, d, "csv")
+    is_today = (d == today)
+
+    # 历史天命中缓存 → 直接读，不再查
+    if not no_cache and not is_today and os.path.exists(csv_file):
+        print(f"    {d} 缓存命中")
+        with open(csv_file, "r", encoding="utf-8") as f:
+            csv_text = f.read()
+    else:
+        # 当天数据每次都重查；缺失天补查
+        if headers is None:
+            headers = mcp_session()
+        csv_text = _query_one_day(headers, d)
+        with open(csv_file, "w", encoding="utf-8") as f:
+            f.write(csv_text)
+</code></pre>
+
+  <div class="code-label">长消息分段补全（offset 推进式查询）</div>
+<pre><code>offset = 1801
+while offset &lt; max_len:
+    sql = (f"SELECT conversation_id, message_seq, "
+           f"SUBSTRING(message_content, {offset}, 2000) as msg_ext "
+           f"FROM datasource_table "
+           f"WHERE date_dt = '{date_str}' "
+           f"AND CHAR_LENGTH(message_content) &gt; {offset - 1}")
+    # ... 拼接到 extensions[(sid, seq)]
+    if count == 0:
+        break  # 这一天没有更长的了
+    offset += 2000
+</code></pre>
+
+  <h3>方法论 <span class="tag takeaway">TAKEAWAY</span></h3>
+  <blockquote>分片的 key 要选"自然边界"。日期是天然的、单调递增的、可哈希的——它同时满足"分片"<strong>和</strong>"缓存键"两个角色。如果你的 key 选的是"分页号"或"游标"，缓存就会很难写。</blockquote>
+</section>
+
+<!-- ════ 4) 缓存 ═══════════════════════════════════════════ -->
+<section id="cache">
+  <h2><span class="num">04</span> 缓存：可重入是定时任务的命门</h2>
+  <p class="lede">缓存是性能优化，更是<strong>可重入性</strong>。把它做对，cron 任务才敢放心定时跑。</p>
+
+  <div class="compare">
+    <div class="col before">
+      <h4>没缓存的样子</h4>
+      <ul>
+        <li>每次跑全部 14 天 → 12 分钟</li>
+        <li>查到一半挂了 → 一切重来</li>
+        <li>调试改一行代码 → 再等 12 分钟</li>
+        <li>风控随机拦截 → 全流程脆弱</li>
+      </ul>
+    </div>
+    <div class="col after">
+      <h4>按天缓存后</h4>
+      <ul>
+        <li>常态运行 24 秒（只查今天）</li>
+        <li>挂哪一天补哪一天</li>
+        <li>调试瞬间出结果</li>
+        <li>风控偶发不影响整体</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>三条缓存设计准则 <span class="tag takeaway">TAKEAWAY</span></h3>
+  <ol>
+    <li><strong>"今天"永远不命中缓存。</strong>当天数据还在写，缓存了就锁死了。</li>
+    <li><strong>缓存文件名 = 缓存语义。</strong><code>&lt;dataset&gt;_2026-06-04.csv</code> 一眼看出来源、日期、格式，删起来也不慌。</li>
+    <li><strong>原子写入。</strong>先写 <code>.tmp</code> 再 <code>os.replace</code>。否则 cron 半路被杀，下次读到半截 JSON 就懵了。</li>
+  </ol>
+
+  <div class="code-label">原子写入模板（任何"输出文件"都该这样写）</div>
+<pre><code>tmp = output_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+os.replace(tmp, output_path)   # POSIX 原子操作，读端不会读到半截
+</code></pre>
+
+  <blockquote class="tip">
+    <strong>小技巧：</strong>给缓存目录加 <code>du -sh cache/</code> 监控。看到尺寸暴涨知道有数据膨胀；看到没增长知道 cron 没在跑——这是免费的健康检查。
+  </blockquote>
+</section>
+
+<!-- ════ 5) 看板 ════════════════════════════════════════════ -->
+<section id="render">
+  <h2><span class="num">05</span> 看板：单文件 HTML 的极简哲学</h2>
+  <p class="lede">最终产物是一个<strong>单文件 HTML</strong>——50MB，包含全部数据 + 全部 JS + 全部样式。没有后端、没有数据库、没有登录态。</p>
+
+  <h3>为什么不做成 Web 服务？ <span class="tag problem">CHOICE</span></h3>
+  <table>
+    <thead><tr><th>方案</th><th>开发成本</th><th>运维成本</th><th>分享成本</th></tr></thead>
+    <tbody>
+      <tr><td>Flask + 数据库 + 前端框架</td><td>高（鉴权/部署/接口）</td><td>持续</td><td>需要发链接 + 解释怎么登录</td></tr>
+      <tr><td>Streamlit / Dash</td><td>中</td><td>持续</td><td>同上</td></tr>
+      <tr><td><strong>单文件 HTML（本方案）</strong></td><td>低（一个 Python 脚本拼出来）</td><td>≈ 0</td><td>发 URL，别人点开就能看；甚至能下载到本地离线打开</td></tr>
+    </tbody>
+  </table>
+
+  <h3>实现方法 <span class="tag solution">SOLUTION</span></h3>
+  <p>HTML 模板里留一个占位符 <code>&lt;!--DATA--&gt;</code>，Python 在最后一步把全量 JSON 注入进去：</p>
+
+  <div class="code-label">Python 端：把数据塞进模板</div>
+<pre><code>json_out = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+json_out = json_out.replace("&lt;/", "&lt;\\/")  # 防 XSS：避免 &lt;/script&gt; 闭合
+
+script_block = f"&lt;script&gt;\nR={json_out};\n{init_code}\n&lt;/script&gt;"
+html = template.replace("&lt;!--DATA--&gt;", script_block)
+</code></pre>
+
+  <div class="code-label">HTML 端：所有变量从全局 R 拿</div>
+<pre><code>// R 由 Python 注入，里面有 p1/p2/allDepts/agentDash 等
+function rdt(data){
+    var m={};
+    data.forEach(function(r){
+        if(!m[r.dept]) m[r.dept]={u:new Set(), s:new Set(), g:0};
+        m[r.dept].u.add(r.email);
+        m[r.dept].s.add(r.sid);
+        m[r.dept].g += r.q;
+    });
+    // ... 渲染表格
+}
+</code></pre>
+
+  <blockquote>
+    <strong>关键 trick：</strong><code>json.dumps(...).replace("&lt;/", "&lt;\\/")</code> —— 否则消息里如果有 <code>&lt;/script&gt;</code> 字符串就会提前关闭脚本块，前端直接崩。这是把数据塞进 inline script 的标准防护。
+  </blockquote>
+
+  <h3>为什么 50MB 也能直接打开 <span class="tag takeaway">TAKEAWAY</span></h3>
+  <ul>
+    <li>JSON 用 <code>separators=(",",":")</code> 紧凑序列化，省 30%+；</li>
+    <li>27k 行数据浏览器内存占用约 100MB，现代电脑无压力；</li>
+    <li>HTTP 服务用 <code>python3 -m http.server 8080</code>，gzip 后传输只有 12MB；</li>
+    <li>所有筛选/排序/分页都在浏览器内做，零后端调用。</li>
+  </ul>
+</section>
+
+<!-- ════ 6) 筛选 ═══════════════════════════════════════════ -->
+<section id="filter">
+  <h2><span class="num">06</span> 筛选：所有过滤都跑在内存里</h2>
+  <p class="lede">9 个筛选维度（日期、部门、Agent、来源、角色、用户名、邮箱、会话 ID、日期-小时）全部在前端跑。代码不到 30 行。</p>
+
+  <h3>筛选条件抽象成"链式 filter" <span class="tag solution">SOLUTION</span></h3>
+  <div class="code-label">详情页筛选函数（短到可以贴在 PPT 上）</div>
+<pre><code>function fp2(){
+    var d1 = document.getElementById('p2ds').value,
+        d2 = document.getElementById('p2de').value,
+        rs = gc('p2rp'), dps = gc('p2dp2'),     // gc = getChecked，返回 Set 或 null
+        as = gc('p2ap'), nv = id('p2n').toLowerCase();
+    return R.p2.filter(function(r){
+        if(d1 && r.d &lt; d1) return false;
+        if(d2 && r.d &gt; d2) return false;
+        if(rs && !rs.has(r.role)) return false;
+        if(dps && !dps.has(r.dept)) return false;
+        if(as && !as.has(r.agent)) return false;
+        if(nv && r.name.toLowerCase().indexOf(nv) &lt; 0) return false;
+        // ... 其他条件
+        return true;
+    });
+}
+</code></pre>
+
+  <h3>方法论 <span class="tag takeaway">TAKEAWAY</span></h3>
+  <ul>
+    <li><strong><code>null</code> = 全选 = 不过滤</strong>：让"未操作"和"全选"等价，用户体验上没歧义。</li>
+    <li><strong>每个条件单独 <code>if</code></strong>：不要写大写一长串 <code>&&</code>。逐条 <code>return false</code> 短路，加新条件不会影响旧的。</li>
+    <li><strong>Set 而不是 Array</strong>：<code>rs.has(r.role)</code> 是 O(1)，27k 行 × 9 维度 × 包含判断就是 240k 次操作，几十毫秒。</li>
+  </ul>
+
+  <blockquote>
+    所有筛选 UI 共用 4 个工具函数：<code>cdd</code> 创建下拉、<code>ub</code> 更新按钮文案、<code>fdd</code> 搜索过滤、<code>gc</code> 获取选中。每个筛选器声明 4 行就能用——这是组件化的最小代价。
+  </blockquote>
+</section>
+
+<!-- ════ 7) 会话展示 ═══════════════════════════════════════ -->
+<section id="session">
+  <h2><span class="num">07</span> 会话展示：嵌套行 + 折叠</h2>
+  <p class="lede">"问题排查"页要看完整对话上下文。把消息按 <code>conversation_id</code> 聚合成会话行，点击展开看全部消息——纯 CSS 做折叠，零 JS 框架。</p>
+
+  <h3>实现方式 <span class="tag solution">SOLUTION</span></h3>
+  <ol>
+    <li>渲染时一次性输出"会话行 + 该会话的所有消息行"，消息行带 <code>data-g="g0"</code> 标识；</li>
+    <li>消息行默认 <code>display:none</code>，加了 <code>.open</code> 类才显示；</li>
+    <li>点击会话行只是 toggle 一组 <code>.open</code> 类，没有任何重新渲染。</li>
+  </ol>
+
+  <div class="code-label">CSS（核心就两行）</div>
+<pre><code>.mrow { display: none; background: #fafafa; }
+.mrow.open { display: table-row; }
+</code></pre>
+
+  <div class="code-label">JS toggle</div>
+<pre><code>function tgs(id){
+    var rows = document.querySelectorAll('tr[data-g="' + id + '"]'),
+        tg   = document.getElementById('t' + id),
+        open = tg.classList.contains('open');
+    rows.forEach(function(r){ r.classList.toggle('open', !open); });
+    tg.classList.toggle('open', !open);
+}
+</code></pre>
+
+  <blockquote class="tip">
+    <strong>小心翻页和折叠状态。</strong>翻页时所有展开状态会丢——这是预期行为。如果用户希望"翻页保留展开"，就得改用 ID-based 的全局 state（成本骤增）。多数场景下"翻页即重置"是更可控的选择。
+  </blockquote>
+</section>
+
+<!-- ════ 8) 定时 ═══════════════════════════════════════════ -->
+<section id="cron">
+  <h2><span class="num">08</span> 定时：拆分本地与服务器，各干其能</h2>
+  <p class="lede">最初版本：本机全包。结果就是要 7×24 开机连 VPN 才行。重构后：<strong>本机只做开发机做不到的事</strong>。</p>
+
+  <div class="compare">
+    <div class="col before">
+      <h4>重构前（本机全包）</h4>
+      <ul>
+        <li>本机 cron 调 <code>generate_report.py</code></li>
+        <li>本机查数据网关，本机抓 4 个 Agent</li>
+        <li>本机生成 50MB HTML，scp 推送</li>
+        <li>耗时 100s+，必须开机+连 VPN</li>
+        <li>晚上电脑合盖就漏跑</li>
+      </ul>
+    </div>
+    <div class="col after">
+      <h4>重构后（拆分职责）</h4>
+      <ul>
+        <li>本机 cron 只跑 <code>scrape_agents.py</code> → scp <code>agents.json</code></li>
+        <li>开发机 cron 跑主任务，读本机推来的 JSON</li>
+        <li>开发机内网直连数据网关，更快</li>
+        <li>本机部分 35s，开发机部分 24s</li>
+        <li>开发机 7×24，本机偶尔漏跑也不影响主链路</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>关键决策 <span class="tag takeaway">TAKEAWAY</span></h3>
+  <p>重构时差点踩了一个大坑：开发机访问不了 Playwright 的 CDN，<code>playwright install chromium</code> 卡死 24 分钟没动。这时不能"硬扛"——直接接受现实：</p>
+
+  <blockquote class="warn">
+    <strong>"开发机装不上 chromium → 让本机来抓"</strong>是一个被现实倒逼的设计。<br>
+    很多时候架构不是规划出来的，是被环境约束 <em>挤</em> 出来的——重要的是<strong>识别约束并诚实接受</strong>，而不是和环境硬刚。
+  </blockquote>
+
+  <h3>cron 错峰：避免抢占 <span class="tag solution">SOLUTION</span></h3>
+  <p>本机推送在每小时 <code>:10</code>，开发机生成在 <code>:12</code>，留 2 分钟给 SSH 完成。如果同步 <code>:10</code> 撞分钟，scp 还在传开发机就开跑——读到的是上一个小时的旧数据。</p>
+
+  <table>
+    <thead><tr><th>机器</th><th>Cron</th><th>动作</th><th>耗时</th></tr></thead>
+    <tbody>
+      <tr><td>本机 macOS</td><td><code>10 9-23 * * *</code></td><td>抓 Agent → scp agents.json</td><td>~35s</td></tr>
+      <tr><td>开发机 Linux</td><td><code>12 9-23 * * *</code></td><td>查 + 渲染 + 写到 HTTP 目录</td><td>~24s</td></tr>
+    </tbody>
+  </table>
+
+  <h3>cron 脚本三件套（直接抄就能用）</h3>
+  <ol>
+    <li><strong>网络可达性预检：</strong> <code>curl --max-time 5</code> 探一下数据源，挂了直接跳过本次（不要试图重试，下次自然会再触发）；</li>
+    <li><strong>新鲜度检查：</strong>看上游文件的 mtime，太老就在日志里告警，但不阻断（数据老总比没数据强）；</li>
+    <li><strong>顺手保活下游：</strong>HTTP 服务挂了就自动 <code>nohup</code> 拉起来——把多个职责合并到一个 cron，少一个故障点。</li>
+  </ol>
+
+<pre><code># 网络可达性
+code=$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" https://&lt;data-gateway&gt;/ || echo "000")
+[ "$code" = "000" ] && { echo "[$(date)] 不可达，跳过"; exit 0; }
+
+# 新鲜度
+age_min=$(( ( $(date +%s) - $(stat -c %Y "$AGENTS_JSON") ) / 60 ))
+[ "$age_min" -gt 120 ] && echo "警告：agents.json 已 ${age_min} 分钟未更新"
+
+# 顺手保活 HTTP 服务
+curl -sS --max-time 3 -o /dev/null http://127.0.0.1:8080/ \
+  || nohup python3 -m http.server 8080 --bind 0.0.0.0 &amp;
+</code></pre>
+</section>
+
+<!-- ════ 9) 部署 ═══════════════════════════════════════════ -->
+<section id="deploy">
+  <h2><span class="num">09</span> 部署：tar over ssh + python http.server</h2>
+  <p class="lede">没有 nginx、没有 docker、没有 CI/CD。两条命令搞定文件同步，一行命令搞定 HTTP 服务。</p>
+
+  <h3>同步代码：rsync 不在？用 tar over ssh <span class="tag solution">SOLUTION</span></h3>
+<pre><code># 一行同步 scripts + templates + cache 三个目录到开发机
+tar czf - scripts templates cache | ssh &lt;user&gt;@&lt;dev-server&gt; 'cd ~/data-report && tar xzf -'
+</code></pre>
+
+  <p>这条命令的妙处：<strong>压缩 + 网络传输 + 解压三步管道流式进行</strong>，不落临时文件，比 rsync 还简单。在没装 rsync 的目标机上是最优解。</p>
+
+  <h3>HTTP 服务：一行起 <span class="tag solution">SOLUTION</span></h3>
+<pre><code># 在产物目录下起一个 8080 端口的静态服务
+cd /tmp/report_server &amp;&amp; nohup python3 -m http.server 8080 --bind 0.0.0.0 &amp;
+</code></pre>
+
+  <p>对于"内网分享一个静态报告"这个场景，python 自带的 <code>http.server</code> 完全够用——支持 Range 请求、能处理几 MB 的并发、还自带访问日志。引入 nginx 是 over-engineering。</p>
+
+  <blockquote class="tip">
+    <strong>路径设计：</strong>用 <code>/&lt;project&gt;/index.html</code> 而不是 <code>/report.html</code>。一来 <code>index.html</code> 让 URL 更短（直接访问目录），二来后续可以并存多个数据集（<code>/project-a/</code>、<code>/project-b/</code>...）共用同一个 HTTP 服务。
+  </blockquote>
+</section>
+
+<!-- ════ 10) 复盘 ═══════════════════════════════════════════ -->
+<section id="pitfalls">
+  <h2><span class="num">10</span> 复盘：踩过的坑与权衡</h2>
+  <p class="lede">真正贵的经验不是"做对了什么"，是"做错过什么"。</p>
+
+  <table>
+    <thead><tr><th>坑</th><th>表现</th><th>解法 / 取舍</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>SQL 一次取太多被风控</td>
+        <td>HTTP 502 / 数据被截断</td>
+        <td>按天分批 + 缓存。<span class="pill ok">已解</span></td>
+      </tr>
+      <tr>
+        <td>消息内容超 1800 字符被截断</td>
+        <td>"问题排查"页看不到完整对话</td>
+        <td>SUBSTRING 分段补全 + 按天 ext.json 缓存。<span class="pill ok">已解</span></td>
+      </tr>
+      <tr>
+        <td>开发机装不上 chromium</td>
+        <td>playwright install 卡 20 分钟</td>
+        <td>放弃远程装，本机抓 → JSON → scp。<span class="pill ok">已解</span></td>
+      </tr>
+      <tr>
+        <td>本机合盖漏跑 cron</td>
+        <td>报告几小时不更新</td>
+        <td>主任务迁开发机，本机只跑非关键的 Agent 抓取。<span class="pill ok">已解</span></td>
+      </tr>
+      <tr>
+        <td>scp 传到一半被读</td>
+        <td>开发机解析 agents.json 失败</td>
+        <td>原子写：本机先写 .tmp 再 rename，scp 一次性整文件传输。<span class="pill ok">已解</span></td>
+      </tr>
+      <tr>
+        <td>cron 同分钟撞车</td>
+        <td>读到旧数据</td>
+        <td>错峰 2 分钟（本机 :10，开发机 :12）。<span class="pill ok">已解</span></td>
+      </tr>
+      <tr>
+        <td>JSON 嵌入 HTML 含 <code>&lt;/script&gt;</code></td>
+        <td>页面解析提前结束，整个看板黑屏</td>
+        <td><code>.replace("&lt;/", "&lt;\\/")</code>。<span class="pill ok">已解</span></td>
+      </tr>
+      <tr>
+        <td>50MB 单文件首次加载略慢</td>
+        <td>用户首次打开等 5 秒</td>
+        <td>HTTP 自带 gzip 后 ≈12MB；可接受。<span class="pill no">未优化</span></td>
+      </tr>
+      <tr>
+        <td>没有用户级别访问控制</td>
+        <td>内网任何人都能看到全部对话内容</td>
+        <td>可接受（团队工具 + 内网）。如需收紧：换 nginx + basic auth。<span class="pill no">按需</span></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ════ 11) 复用清单 ═══════════════════════════════════════ -->
+<section id="reuse">
+  <h2><span class="num">11</span> 复用清单：换个数据集要改什么</h2>
+  <p class="lede">如果你想拿这套架构做自己团队的数据看板，按下面这张表逐项替换即可。</p>
+
+  <table>
+    <thead><tr><th>位置</th><th>改什么</th><th>难度</th></tr></thead>
+    <tbody>
+      <tr><td><code>generate_report.py</code> 顶部</td><td>数据源 URL、Token、数据集表名（<code>datasource_table</code>）</td><td>★</td></tr>
+      <tr><td><code>_query_one_day</code> 里的 SQL</td><td>替换为你的字段列表与表达式</td><td>★</td></tr>
+      <tr><td><code>COL_*</code> 常量</td><td>映射成 CSV 列名（中文/英文都行）</td><td>★</td></tr>
+      <tr><td><code>parse_csv</code> 里的 p1/p2 构造</td><td>决定哪些字段进汇总（p1）哪些进明细（p2）</td><td>★★</td></tr>
+      <tr><td><code>templates/report.html</code> 顶部 H1</td><td>报告标题 + 默认日期范围</td><td>★</td></tr>
+      <tr><td><code>templates/report.html</code> 筛选区</td><td>按你的字段调整下拉选项数量</td><td>★★</td></tr>
+      <tr><td><code>rdt</code> / <code>rat</code> / <code>rut</code> 三个汇总函数</td><td>改成你想看的"分什么 × 算什么"</td><td>★★</td></tr>
+      <tr><td><code>scrape_agents.py</code></td><td>如果不需要外部抓取，直接删；否则改 URL 列表 + 解析正则</td><td>★★</td></tr>
+      <tr><td>cron 表达式</td><td>按你的更新频率改（建议偶发分钟数避开 :00）</td><td>★</td></tr>
+      <tr><td>部署目标</td><td>开发机 IP + 路径</td><td>★</td></tr>
+    </tbody>
+  </table>
+
+  <h3>30 分钟启动模板</h3>
+  <ol class="stages">
+    <li><b>第 1 步：跑通查询。</b><small>把你的 SQL 跑一遍，输出一份 CSV，确认字段名。</small></li>
+    <li><b>第 2 步：复用 generate_report.py。</b><small>替换 SQL + COL_* 常量。本地跑一次，确认产物 HTML 能打开。</small></li>
+    <li><b>第 3 步：调模板里的 H1 和默认筛选项。</b><small>改 HTML 里的标题，运行确认日期范围合理。</small></li>
+    <li><b>第 4 步：先手动 scp 一次到目标机。</b><small>确认 HTTP 服务能服务这个文件（curl 看 HTTP 200）。</small></li>
+    <li><b>第 5 步：装 cron。</b><small>用上面给的脚本三件套，先跑一次验证。</small></li>
+    <li><b>第 6 步：分享 URL。</b><small>整个过程通常 30 分钟内完成。</small></li>
+  </ol>
+</section>
+
+<!-- ════ 总结 ═══════════════════════════════════════════════ -->
+<section id="closing">
+  <h2><span class="num">12</span> 一句话总结</h2>
+  <blockquote style="font-size:18px;line-height:1.6;font-weight:500">
+    把昂贵的查询缓存住、把数据和视图分开、把客户端能干的不放服务端、让两台机器各干其能、让定时任务幂等到挂了无所谓——
+    剩下的<strong>不是工程问题，是审美问题</strong>。
+  </blockquote>
+  <p style="margin-top:20px;color:var(--muted);font-size:14px">
+    这套东西没有一个"现代框架"。它的全部分量：~500 行 Python、~190 行 HTML、~50 行 shell。
+    但它每天 9 点到 23 点准时为团队提供一份能筛选、能下钻、能分享的数据看板——
+    <strong>这就是软件工程的一种克制美学</strong>。
+  </p>
+</section>
+
+</div>
+
+<footer>
+  <p>本文为方法论提炼，可自由复用 / 改写。</p>
+  <p>架构、代码片段、cron 模板均已脱敏，可直接套用到你自己的数据集。</p>
+</footer>
+
+</body>
+</html>
