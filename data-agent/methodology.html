@@ -100,13 +100,13 @@
   .arch svg{display:block;margin:0 auto;max-width:100%;height:auto}
   .arch-caption{text-align:center;color:var(--muted);font-size:12.5px;margin-top:10px}
 
-  /* 流程箭头列表 */
+  /* 流程步骤列表:左列圆圈数字、右列标题+描述,显式分配避免文字挤成一列 */
   .stages{counter-reset:st;list-style:none;margin:14px 0 18px;padding:0}
-  .stages li{counter-increment:st;display:grid;grid-template-columns:32px 1fr;gap:12px;padding:10px 0;border-bottom:1px dashed var(--line)}
+  .stages li{counter-increment:st;display:grid;grid-template-columns:32px minmax(0,1fr);column-gap:12px;row-gap:3px;padding:12px 0;border-bottom:1px dashed var(--line);align-items:start}
   .stages li:last-child{border-bottom:none}
-  .stages li::before{content:counter(st);background:var(--accent);color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
-  .stages li b{font-weight:600}
-  .stages li small{color:var(--muted);font-size:12px;display:block;margin-top:2px}
+  .stages li::before{content:counter(st);grid-column:1;grid-row:1 / span 2;background:var(--accent);color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:1px}
+  .stages li b{grid-column:2;grid-row:1;font-weight:600;font-size:14.5px;line-height:1.55;word-break:normal;overflow-wrap:break-word}
+  .stages li small{grid-column:2;grid-row:2;color:var(--muted);font-size:13px;line-height:1.65;display:block;word-break:normal;overflow-wrap:break-word}
 
   /* footer */
   footer{margin-top:80px;padding-top:30px;border-top:1px solid var(--line);text-align:center;color:var(--muted);font-size:13px}
